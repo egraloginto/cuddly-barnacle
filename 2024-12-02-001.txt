@@ -1,3 +1,10 @@
+# First, ensure you're connected to your Azure account
+# If not already connected, use: Connect-AzAccount
+
+# Get current date and time for the filename
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$csvPath = ".\AzureStorageAudit_$timestamp.csv"
+
 # Create an empty array to store our results
 $results = @()
 
@@ -24,5 +31,8 @@ foreach ($storageAccount in $storageAccounts) {
     $results += $accountInfo
 }
 
-# Output the results in a formatted table
-$results | Format-Table -AutoSize
+# Output the results to both the console and a CSV file
+# The Tee-Object cmdlet sends the output to both the pipeline and a file
+$results | Tee-Object -FilePath $csvPath | Format-Table -AutoSize
+
+Write-Host "`nAudit results have been saved to: $csvPath" -ForegroundColor Green
