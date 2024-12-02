@@ -8,31 +8,47 @@ $csvPath = ".\AzureStorageAudit_$timestamp.csv"
 # Create an empty array to store our results
 $results = @()
 
-# Get all storage accounts in the subscription
+# First, let's get all storage accounts in the subscription
 $storageAccounts = Get-AzStorageAccount
+
+# Create a formatted header string for our CSV
+$header = @(
+    "Storage Account Name".PadRight(30),
+    "Resource Group".PadRight(20),
+    "Default Action".PadRight(15),
+    "Has VNet Rules".PadRight(15),
+    "Has IP Rules".PadRight(15),
+    "VNet Rule Count".PadRight(15),
+    "IP Rule Count".PadRight(15)
+) -join ","
+
+# Write the header to both console and CSV
+$header | Out-File -FilePath $csvPath
+Write-Host $header
+
+# Create a separator line for visual clarity in console
+$separator = "-" * ($header.Length)
+Write-Host $separator
 
 # Iterate through each storage account
 foreach ($storageAccount in $storageAccounts) {
     # Get the network rules for the storage account
     $networkRules = $storageAccount.NetworkRuleSet
     
-    # Create a custom object for each storage account with the required properties
-    $accountInfo = [PSCustomObject]@{
-        'Storage Account Name' = $storageAccount.StorageAccountName
-        'Resource Group'       = $storageAccount.ResourceGroupName
-        'Default Action'       = $networkRules.DefaultAction
-        'Has VNet Rules'       = if ($networkRules.VirtualNetworkRules.Count -gt 0) { 'Yes' } else { 'No' }
-        'Has IP Rules'         = if ($networkRules.IpRules.Count -gt 0) { 'Yes' } else { 'No' }
-        'VNet Rule Count'      = $networkRules.VirtualNetworkRules.Count
-        'IP Rule Count'        = $networkRules.IpRules.Count
-    }
+    # Format each field with consistent spacing
+    $formattedLine = @(
+        $storageAccount.StorageAccountName.PadRight(30),
+        $storageAccount.ResourceGroupName.PadRight(20),
+        $networkRules.DefaultAction.ToString().PadRight(15),
+        $(if ($networkRules.VirtualNetworkRules.Count -gt 0) { "Yes" } else { "No" }).PadRight(15),
+        $(if ($networkRules.IpRules.Count -gt 0) { "Yes" } else { "No" }).PadRight(15),
+        $networkRules.VirtualNetworkRules.Count.ToString().PadRight(15),
+        $networkRules.IpRules.Count.ToString().PadRight(15)
+    ) -join ","
     
-    # Add the storage account info to our results array
-    $results += $accountInfo
+    # Write the formatted line to both console and CSV
+    $formattedLine | Out-File -FilePath $csvPath -Append
+    Write-Host $formattedLine
 }
-
-# Output the results to both the console and a CSV file
-# The Tee-Object cmdlet sends the output to both the pipeline and a file
-$results | Tee-Object -FilePath $csvPath | Format-Table -AutoSize
 
 Write-Host "`nAudit results have been saved to: $csvPath" -ForegroundColor Green
