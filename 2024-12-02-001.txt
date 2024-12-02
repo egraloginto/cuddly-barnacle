@@ -8,47 +8,61 @@ $csvPath = ".\AzureStorageAudit_$timestamp.csv"
 # Create an empty array to store our results
 $results = @()
 
-# First, let's get all storage accounts in the subscription
+# Get all storage accounts in the subscription
 $storageAccounts = Get-AzStorageAccount
 
-# Create a formatted header string for our CSV
-$header = @(
-    "Storage Account Name".PadRight(30),
-    "Resource Group".PadRight(20),
-    "Default Action".PadRight(15),
-    "Has VNet Rules".PadRight(15),
-    "Has IP Rules".PadRight(15),
-    "VNet Rule Count".PadRight(15),
-    "IP Rule Count".PadRight(15)
-) -join ","
-
-# Write the header to both console and CSV
-$header | Out-File -FilePath $csvPath
-Write-Host $header
-
-# Create a separator line for visual clarity in console
-$separator = "-" * ($header.Length)
-Write-Host $separator
-
-# Iterate through each storage account
 foreach ($storageAccount in $storageAccounts) {
     # Get the network rules for the storage account
     $networkRules = $storageAccount.NetworkRuleSet
     
-    # Format each field with consistent spacing
-    $formattedLine = @(
-        $storageAccount.StorageAccountName.PadRight(30),
-        $storageAccount.ResourceGroupName.PadRight(20),
-        $networkRules.DefaultAction.ToString().PadRight(15),
-        $(if ($networkRules.VirtualNetworkRules.Count -gt 0) { "Yes" } else { "No" }).PadRight(15),
-        $(if ($networkRules.IpRules.Count -gt 0) { "Yes" } else { "No" }).PadRight(15),
-        $networkRules.VirtualNetworkRules.Count.ToString().PadRight(15),
-        $networkRules.IpRules.Count.ToString().PadRight(15)
-    ) -join ","
+    # Get blob service properties to check anonymous access
+    $blobProperties = $null
+    $allowBlobPublicAccess = "N/A"
+    try {
+        $blobProperties = Get-AzStorageServiceProperty -Context $storageAccount.Context -ServiceType Blob
+        $allowBlobPublicAccess = $storageAccount.AllowBlobPublicAccess
+    }
+    catch {
+        Write-Warning "Unable to get blob properties for $($storageAccount.StorageAccountName): $($_.Exception.Message)"
+    }
+
+    # Get file service properties to check anonymous access
+    $fileProperties = $null
+    $allowFileAnonymousAccess = "N/A"
+    try {
+        $ctx = $storageAccount.Context
+        $shares = Get-AzStorageShare -Context $ctx -ErrorAction SilentlyContinue
+        $allowFileAnonymousAccess = if ($shares.Where({$_.ShareProperties.AccessTier -eq "TransactionOptimized"}).Count -gt 0) {
+            "Possible" # If transaction-optimized shares exist, anonymous access might be possible
+        } else {
+            "No"
+        }
+    }
+    catch {
+        Write-Warning "Unable to get file properties for $($storageAccount.StorageAccountName): $($_.Exception.Message)"
+    }
     
-    # Write the formatted line to both console and CSV
-    $formattedLine | Out-File -FilePath $csvPath -Append
-    Write-Host $formattedLine
+    # Create a custom object for each storage account with the required properties
+    $accountInfo = [PSCustomObject]@{
+        'StorageAccountName'    = $storageAccount.StorageAccountName
+        'ResourceGroup'         = $storageAccount.ResourceGroupName
+        'DefaultAction'         = $networkRules.DefaultAction
+        'HasVNetRules'         = if ($networkRules.VirtualNetworkRules.Count -gt 0) { 'Yes' } else { 'No' }
+        'HasIPRules'           = if ($networkRules.IpRules.Count -gt 0) { 'Yes' } else { 'No' }
+        'VNetRuleCount'        = $networkRules.VirtualNetworkRules.Count
+        'IPRuleCount'          = $networkRules.IpRules.Count
+        'BlobPublicAccess'     = $allowBlobPublicAccess
+        'FileAnonymousAccess'  = $allowFileAnonymousAccess
+    }
+    
+    # Add the storage account info to our results array
+    $results += $accountInfo
 }
+
+# Output the results to console as a formatted table
+$results | Format-Table -AutoSize
+
+# Export to CSV without padding
+$results | Export-Csv -Path $csvPath -NoTypeInformation
 
 Write-Host "`nAudit results have been saved to: $csvPath" -ForegroundColor Green
