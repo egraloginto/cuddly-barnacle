@@ -1,0 +1,150 @@
+# Script to retrieve all active Azure policies and their scope levels
+# Requirements: Azure PowerShell module and authenticated Azure session
+
+# Function to convert scope to readable format
+function Get-ScopeLevel {
+    param (
+        [string]$scope
+    )
+    
+    if ($scope -match "/providers/Microsoft.Management/managementGroups/") {
+        return "Management Group"
+    }
+    elseif ($scope -match "/subscriptions/[^/]+$") {
+        return "Subscription"
+    }
+    elseif ($scope -match "/resourceGroups/") {
+        return "Resource Group"
+    }
+    else {
+        return "Unknown"
+    }
+}
+
+# Function to get policy assignments for a specific scope
+function Get-PolicyAssignmentsForScope {
+    param (
+        [string]$scopeId
+    )
+    
+    try {
+        $assignments = Get-AzPolicyAssignment -Scope $scopeId -ErrorAction Stop
+        return $assignments
+    }
+    catch {
+        Write-Warning "Error retrieving policies for scope $scopeId : $_"
+        return @()
+    }
+}
+
+# Function to format the scope path for better readability
+function Format-ScopePath {
+    param (
+        [string]$scope
+    )
+    
+    if ($scope -match "/providers/Microsoft.Management/managementGroups/([^/]+)") {
+        return "MG: $($matches[1])"
+    }
+    elseif ($scope -match "/subscriptions/([^/]+)(?:/resourceGroups/([^/]+))?") {
+        if ($matches[2]) {
+            return "Sub: $($matches[1]) / RG: $($matches[2])"
+        }
+        return "Sub: $($matches[1])"
+    }
+    return $scope
+}
+
+# Main script execution
+try {
+    # Verify Azure connection
+    $context = Get-AzContext
+    if (-not $context) {
+        throw "Not connected to Azure. Please run Connect-AzAccount first."
+    }
+
+    # Initialize results array
+    $policyResults = @()
+
+    # Get all subscriptions
+    $subscriptions = Get-AzSubscription
+
+    foreach ($sub in $subscriptions) {
+        # Set context to current subscription
+        Set-AzContext -Subscription $sub.Id | Out-Null
+        Write-Host "Processing subscription: $($sub.Name)" -ForegroundColor Cyan
+
+        # Get subscription-level policies
+        $subPolicies = Get-PolicyAssignmentsForScope -scopeId "/subscriptions/$($sub.Id)"
+        
+        # Get resource groups in current subscription
+        $resourceGroups = Get-AzResourceGroup
+        
+        # Get policies for each resource group
+        foreach ($rg in $resourceGroups) {
+            $rgPolicies = Get-PolicyAssignmentsForScope -scopeId $rg.ResourceId
+            $policyResults += $rgPolicies
+        }
+        
+        $policyResults += $subPolicies
+    }
+
+    # Get management group policies
+    $managementGroups = Get-AzManagementGroup
+    foreach ($mg in $managementGroups) {
+        Write-Host "Processing management group: $($mg.DisplayName)" -ForegroundColor Cyan
+        $mgPolicies = Get-PolicyAssignmentsForScope -scopeId $mg.Id
+        $policyResults += $mgPolicies
+    }
+
+    # Define the properties we want to display
+    $propertySelection = @(
+        @{
+            Name = 'Policy Name'
+            Expression = { $_.Properties.DisplayName }
+        },
+        @{
+            Name = 'Scope Level'
+            Expression = { Get-ScopeLevel -scope $_.Scope }
+        },
+        @{
+            Name = 'Scope Path'
+            Expression = { Format-ScopePath -scope $_.Scope }
+        },
+        @{
+            Name = 'Definition ID'
+            Expression = { ($_.Properties.PolicyDefinitionId -split '/')[-1] }
+        },
+        @{
+            Name = 'Enforcement'
+            Expression = { $_.Properties.EnforcementMode }
+        }
+    )
+
+    # Process results
+    $formattedResults = $policyResults | Select-Object -Property $propertySelection
+
+    # Display results as a formatted table
+    Write-Host "`nAzure Policy Assignments:" -ForegroundColor Green
+    $formattedResults | Format-Table -AutoSize -Wrap
+
+    # Export to CSV with matching columns
+    $outputPath = Join-Path -Path $PWD -ChildPath "AzurePolicies_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+    $formattedResults | Export-Csv -Path $outputPath -NoTypeInformation
+
+    # Display summary
+    Write-Host "`nSummary:" -ForegroundColor Green
+    Write-Host "Total Policies Found: $($policyResults.Count)" -ForegroundColor Green
+    Write-Host "Results exported to: $outputPath" -ForegroundColor Green
+    
+    # Display breakdown by scope level
+    Write-Host "`nPolicy Distribution:" -ForegroundColor Green
+    $formattedResults | Group-Object 'Scope Level' | ForEach-Object {
+        Write-Host "$($_.Name): $($_.Count) policies" -ForegroundColor Yellow
+    }
+
+} catch {
+    Write-Error "An error occurred: $_"
+    Write-Error $_.Exception.Message
+    Write-Error $_.ScriptStackTrace
+}
