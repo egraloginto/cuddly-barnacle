@@ -15,44 +15,59 @@ foreach ($storageAccount in $storageAccounts) {
     # Get the network rules for the storage account
     $networkRules = $storageAccount.NetworkRuleSet
     
-    # Get blob service properties to check anonymous access
-    $blobProperties = $null
-    $allowBlobPublicAccess = "N/A"
-    try {
-        $blobProperties = Get-AzStorageServiceProperty -Context $storageAccount.Context -ServiceType Blob
-        $allowBlobPublicAccess = $storageAccount.AllowBlobPublicAccess
-    }
-    catch {
-        Write-Warning "Unable to get blob properties for $($storageAccount.StorageAccountName): $($_.Exception.Message)"
-    }
-
-    # Get file service properties to check anonymous access
-    $fileProperties = $null
-    $allowFileAnonymousAccess = "N/A"
-    try {
-        $ctx = $storageAccount.Context
-        $shares = Get-AzStorageShare -Context $ctx -ErrorAction SilentlyContinue
-        $allowFileAnonymousAccess = if ($shares.Where({$_.ShareProperties.AccessTier -eq "TransactionOptimized"}).Count -gt 0) {
-            "Possible" # If transaction-optimized shares exist, anonymous access might be possible
-        } else {
-            "No"
+    # Check account-level public access setting
+    $publicAccessAllowed = $storageAccount.AllowBlobPublicAccess
+    
+    # Initialize container access variable
+    $containerAnonymousAccess = "No containers with anonymous access"
+    
+    # Only check container-level settings if public access is enabled at account level
+    if ($publicAccessAllowed) {
+        try {
+            # Get all containers in the storage account
+            $containers = Get-AzStorageContainer -Context $storageAccount.Context -ErrorAction Stop
+            
+            # Check if any containers allow anonymous access
+            $anonymousContainers = $containers | Where-Object { $_.PublicAccess -ne "None" }
+            if ($anonymousContainers) {
+                $containerDetails = $anonymousContainers | ForEach-Object {
+                    "$($_.Name)($($_.PublicAccess))"
+                }
+                $containerAnonymousAccess = $containerDetails -join '; '
+            }
+        }
+        catch {
+            $containerAnonymousAccess = "Error checking containers: $($_.Exception.Message)"
+            Write-Warning "Unable to check containers in $($storageAccount.StorageAccountName): $($_.Exception.Message)"
         }
     }
-    catch {
-        Write-Warning "Unable to get file properties for $($storageAccount.StorageAccountName): $($_.Exception.Message)"
+    else {
+        $containerAnonymousAccess = "N/A - Public access disabled at account level"
+    }
+    
+    # Determine the effective access state
+    $effectiveAccessState = if (-not $publicAccessAllowed) {
+        "Blocked at account level"
+    }
+    elseif ($containerAnonymousAccess -eq "No containers with anonymous access") {
+        "Allowed at account level, but no containers enable it"
+    }
+    else {
+        "Anonymous access enabled on some containers"
     }
     
     # Create a custom object for each storage account with the required properties
     $accountInfo = [PSCustomObject]@{
-        'StorageAccountName'    = $storageAccount.StorageAccountName
-        'ResourceGroup'         = $storageAccount.ResourceGroupName
-        'DefaultAction'         = $networkRules.DefaultAction
-        'HasVNetRules'         = if ($networkRules.VirtualNetworkRules.Count -gt 0) { 'Yes' } else { 'No' }
-        'HasIPRules'           = if ($networkRules.IpRules.Count -gt 0) { 'Yes' } else { 'No' }
-        'VNetRuleCount'        = $networkRules.VirtualNetworkRules.Count
-        'IPRuleCount'          = $networkRules.IpRules.Count
-        'BlobPublicAccess'     = $allowBlobPublicAccess
-        'FileAnonymousAccess'  = $allowFileAnonymousAccess
+        'StorageAccountName'     = $storageAccount.StorageAccountName
+        'ResourceGroup'          = $storageAccount.ResourceGroupName
+        'DefaultAction'          = $networkRules.DefaultAction
+        'HasVNetRules'          = if ($networkRules.VirtualNetworkRules.Count -gt 0) { 'Yes' } else { 'No' }
+        'HasIPRules'            = if ($networkRules.IpRules.Count -gt 0) { 'Yes' } else { 'No' }
+        'VNetRuleCount'         = $networkRules.VirtualNetworkRules.Count
+        'IPRuleCount'           = $networkRules.IpRules.Count
+        'PublicAccessAllowed'   = $publicAccessAllowed
+        'AnonymousAccess'       = $containerAnonymousAccess
+        'EffectiveAccessState'  = $effectiveAccessState
     }
     
     # Add the storage account info to our results array
