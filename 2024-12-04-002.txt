@@ -1,0 +1,54 @@
+// First, let's create a base query that filters for our specific resource types
+resources
+// Create an array of the resource types we want to track
+| where type in~ (
+    'microsoft.compute/virtualmachines',
+    'microsoft.compute/disks',
+    'microsoft.network/virtualnetworks',
+    'microsoft.network/publicipaddresses',
+    'microsoft.network/networksecuritygroups',
+    'microsoft.storage/storageaccounts',
+    'microsoft.web/sites'
+)
+// Create a simplified type name for better readability
+| extend ShortType = case(
+    type =~ 'microsoft.compute/virtualmachines', 'Virtual Machines',
+    type =~ 'microsoft.compute/disks', 'Virtual Disks',
+    type =~ 'microsoft.network/virtualnetworks', 'Virtual Networks',
+    type =~ 'microsoft.network/publicipaddresses', 'Public IPs',
+    type =~ 'microsoft.network/networksecuritygroups', 'NSGs',
+    type =~ 'microsoft.storage/storageaccounts', 'Storage Accounts',
+    type =~ 'microsoft.web/sites', 'App Services',
+    'Other'
+)
+// Group by resource group and type, counting each
+| summarize ResourceCount=count() by ResourceGroup=resourceGroup, ShortType
+// Create a pivot table for better visualization
+| evaluate pivot(ShortType, sum(ResourceCount), ResourceGroup)
+// Join with total resource count per resource group
+| join kind=leftouter (
+    resources
+    | summarize TotalResources=count() by ResourceGroup=resourceGroup
+) on ResourceGroup
+// Order by resource group name
+| order by ResourceGroup asc
+// Ensure all columns are present even if no resources of that type exist
+| extend 
+    ['Virtual Machines']=iif(isnotnull(['Virtual Machines']), ['Virtual Machines'], 0),
+    ['Virtual Disks']=iif(isnotnull(['Virtual Disks']), ['Virtual Disks'], 0),
+    ['Virtual Networks']=iif(isnotnull(['Virtual Networks']), ['Virtual Networks'], 0),
+    ['Public IPs']=iif(isnotnull(['Public IPs']), ['Public IPs'], 0),
+    ['NSGs']=iif(isnotnull(['NSGs']), ['NSGs'], 0),
+    ['Storage Accounts']=iif(isnotnull(['Storage Accounts']), ['Storage Accounts'], 0),
+    ['App Services']=iif(isnotnull(['App Services']), ['App Services'], 0)
+// Project columns in desired order
+| project 
+    ['Resource Group']=ResourceGroup,
+    ['Total Resources']=TotalResources,
+    ['Virtual Machines'],
+    ['Virtual Disks'],
+    ['Virtual Networks'],
+    ['Public IPs'],
+    ['NSGs'],
+    ['Storage Accounts'],
+    ['App Services']
