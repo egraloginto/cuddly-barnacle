@@ -1,0 +1,41 @@
+// First, let's get subscription information
+let subscriptionInfo = 
+    subscriptions
+    | project subscriptionId, subscriptionName = name;
+
+// Set the target subscription ID
+let targetSubscriptionId = "00000000-0000-0000-0000-000000000000";
+
+// Find resources that are managed by resources in different resource groups
+resources
+// Filter to only include resources from our target subscription
+| where subscriptionId == targetSubscriptionId
+// Join with subscription info to get the managed resource's subscription name
+| join kind=leftouter (subscriptionInfo) on subscriptionId
+// Join with resources table again to get managing resource information
+| join kind=leftouter (
+    resources
+    | where isnotempty(managedBy)
+    // Extract the subscription and resource group from the managedBy property
+    | extend managingSubId = tostring(split(managedBy, '/')[2])
+    | extend managingRG = tostring(split(managedBy, '/')[4])
+    | project 
+        managedId = id,
+        managingSubId,
+        managingRG
+) on $left.id == $right.managedId
+// Join again with subscription info to get the managing resource's subscription name
+| join kind=leftouter (subscriptionInfo) on $left.managingSubId == $right.subscriptionId
+// Only include resources that have a managing resource
+| where isnotempty(managedBy)
+// Filter to resources where the managing resource is in a different resource group
+| where resourceGroup != managingRG
+| project
+    managedResourceName = name,
+    managedResourceType = type,
+    managedResourceGroup = resourceGroup,
+    managedSubscriptionName = subscriptionName,
+    managingResourceGroup = managingRG,
+    managingSubscriptionName = subscriptionName1,
+    managedByResourceId = managedBy
+| order by managedResourceGroup asc, managedResourceName asc
