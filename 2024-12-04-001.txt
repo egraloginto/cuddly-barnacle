@@ -1,15 +1,10 @@
+// Find resources that are managed by resources in different resource groups
 resources
-// Filter to only include resources from our target subscription
-| where subscriptionId == "00000000-0000-0000-0000-000000000000"
-// Join with subscriptions to get the managed resource's subscription name
-| join kind=leftouter (
-    subscriptions
-    | project managedSubId = subscriptionId, managedSubName = name
-) on $left.subscriptionId == $right.managedSubId
-// Join with resources table again to get managing resource information
+// First join the resources with their managing resource references
 | join kind=leftouter (
     resources
     | where isnotempty(managedBy)
+    // Extract the subscription and resource group from the managedBy property
     | extend managingSubId = tostring(split(managedBy, '/')[2])
     | extend managingRG = tostring(split(managedBy, '/')[4])
     | project 
@@ -17,11 +12,6 @@ resources
         managingSubId,
         managingRG
 ) on $left.id == $right.managedId
-// Join with subscriptions again to get the managing subscription name
-| join kind=leftouter (
-    subscriptions
-    | project managingSubId = subscriptionId, managingSubName = name
-) on $left.managingSubId == $right.managingSubId
 // Only include resources that have a managing resource
 | where isnotempty(managedBy)
 // Filter to resources where the managing resource is in a different resource group
@@ -30,8 +20,8 @@ resources
     managedResourceName = name,
     managedResourceType = type,
     managedResourceGroup = resourceGroup,
-    managedSubscriptionName = managedSubName,
+    managedSubscriptionId = subscriptionId,
     managingResourceGroup = managingRG,
-    managingSubscriptionName = managingSubName,
+    managingSubscriptionId = managingSubId,
     managedByResourceId = managedBy
 | order by managedResourceGroup asc, managedResourceName asc
