@@ -21,34 +21,31 @@ resources
     type =~ 'microsoft.web/sites', 'App Services',
     'Other'
 )
-// Group by resource group and type, counting each
-| summarize ResourceCount=count() by ResourceGroup=resourceGroup, ShortType
-// Create a pivot table for better visualization
-| evaluate pivot(ShortType, sum(ResourceCount), ResourceGroup)
-// Join with total resource count per resource group
+// Group by resource group and get counts for each type
+| summarize 
+    VirtualMachines=countif(ShortType == 'Virtual Machines'),
+    VirtualDisks=countif(ShortType == 'Virtual Disks'),
+    VirtualNetworks=countif(ShortType == 'Virtual Networks'),
+    PublicIPs=countif(ShortType == 'Public IPs'),
+    NSGs=countif(ShortType == 'NSGs'),
+    StorageAccounts=countif(ShortType == 'Storage Accounts'),
+    AppServices=countif(ShortType == 'App Services')
+    by ResourceGroup=resourceGroup
+// Join with total resource count
 | join kind=leftouter (
     resources
     | summarize TotalResources=count() by ResourceGroup=resourceGroup
 ) on ResourceGroup
 // Order by resource group name
 | order by ResourceGroup asc
-// Ensure all columns are present even if no resources of that type exist
-| extend 
-    ['Virtual Machines']=iif(isnotnull(['Virtual Machines']), ['Virtual Machines'], 0),
-    ['Virtual Disks']=iif(isnotnull(['Virtual Disks']), ['Virtual Disks'], 0),
-    ['Virtual Networks']=iif(isnotnull(['Virtual Networks']), ['Virtual Networks'], 0),
-    ['Public IPs']=iif(isnotnull(['Public IPs']), ['Public IPs'], 0),
-    ['NSGs']=iif(isnotnull(['NSGs']), ['NSGs'], 0),
-    ['Storage Accounts']=iif(isnotnull(['Storage Accounts']), ['Storage Accounts'], 0),
-    ['App Services']=iif(isnotnull(['App Services']), ['App Services'], 0)
-// Project columns in desired order
+// Project columns in desired order with proper names
 | project 
     ['Resource Group']=ResourceGroup,
     ['Total Resources']=TotalResources,
-    ['Virtual Machines'],
-    ['Virtual Disks'],
-    ['Virtual Networks'],
-    ['Public IPs'],
-    ['NSGs'],
-    ['Storage Accounts'],
-    ['App Services']
+    ['Virtual Machines']=VirtualMachines,
+    ['Virtual Disks']=VirtualDisks,
+    ['Virtual Networks']=VirtualNetworks,
+    ['Public IPs']=PublicIPs,
+    ['NSGs']=NSGs,
+    ['Storage Accounts']=StorageAccounts,
+    ['App Services']=AppServices
