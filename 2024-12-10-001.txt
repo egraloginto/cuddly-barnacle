@@ -1,0 +1,16 @@
+resources
+| summarize 
+    RegionCount = dcount(location),
+    Regions = make_set(location),
+    ResourceCount = count(),
+    Resources = make_set(type)
+    by resourceGroup, subscriptionId
+| where RegionCount > 1
+| project 
+    ['Resource Group'] = resourceGroup,
+    ['Subscription ID'] = subscriptionId,
+    ['Number of Regions'] = RegionCount,
+    ['Regions'] = Regions,
+    ['Resource Count'] = ResourceCount,
+    ['Resource Types'] = Resources
+| order by ['Number of Regions'] desc
