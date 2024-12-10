@@ -14,3 +14,99 @@ resources
     ['Resource Count'] = ResourceCount,
     ['Resource Types'] = Resources
 | order by ['Number of Regions'] desc
+
+
+
+
+
+resources
+| extend HasTags = iif(tags != '', true, false)
+| summarize
+    TotalResources = count(),
+    ResourcesWithTags = countif(HasTags),
+    ResourcesWithoutTags = countif(HasTags == false),
+    TaggedPercentage = round(100.0 * countif(HasTags) / count(), 2),
+    ResourceTypes = make_set(type),
+    CommonTags = make_set(bag_keys(tags))
+    by subscriptionId
+| join kind=leftouter (
+    resourcecontainers
+    | where type == 'microsoft.resources/subscriptions'
+    | project subscriptionId, subscriptionName = name
+) on subscriptionId
+| project
+    ['Subscription Name'] = subscriptionName,
+    ['Subscription ID'] = subscriptionId,
+    ['Total Resources'] = TotalResources,
+    ['Resources With Tags'] = ResourcesWithTags,
+    ['Resources Without Tags'] = ResourcesWithoutTags,
+    ['Tagged %'] = strcat(TaggedPercentage, '%'),
+    ['Resource Types'] = ResourceTypes,
+    ['Tags Used'] = CommonTags
+| order by ['Total Resources'] desc
+
+
+
+
+// First get subscription names
+let subscriptions = 
+    resourcecontainers
+    | where type == 'microsoft.resources/subscriptions'
+    | project subscriptionId, subscriptionName = name;
+
+// Analyze tags at subscription level
+let subscriptionSummary =
+    resources
+    | extend HasTags = iif(tags != '', true, false)
+    | summarize
+        TotalResources = count(),
+        ResourcesWithTags = countif(HasTags),
+        ResourcesWithoutTags = countif(HasTags == false),
+        TaggedPercentage = round(100.0 * countif(HasTags) / count(), 2),
+        ResourceTypes = make_set(type),
+        CommonTags = make_set(bag_keys(tags))
+        by subscriptionId
+    | join kind=leftouter (subscriptions) on subscriptionId
+    | project
+        Level = 'Subscription',
+        ['Subscription Name'] = subscriptionName,
+        ['Subscription ID'] = subscriptionId,
+        ['Resource Group'] = '',
+        ['Total Resources'] = TotalResources,
+        ['Resources With Tags'] = ResourcesWithTags,
+        ['Resources Without Tags'] = ResourcesWithoutTags,
+        ['Tagged %'] = strcat(TaggedPercentage, '%'),
+        ['Resource Types'] = ResourceTypes,
+        ['Tags Used'] = CommonTags;
+
+// Analyze tags at resource group level
+let rgSummary =
+    resources
+    | extend HasTags = iif(tags != '', true, false)
+    | summarize
+        TotalResources = count(),
+        ResourcesWithTags = countif(HasTags),
+        ResourcesWithoutTags = countif(HasTags == false),
+        TaggedPercentage = round(100.0 * countif(HasTags) / count(), 2),
+        ResourceTypes = make_set(type),
+        CommonTags = make_set(bag_keys(tags))
+        by subscriptionId, resourceGroup
+    | join kind=leftouter (subscriptions) on subscriptionId
+    | project
+        Level = 'Resource Group',
+        ['Subscription Name'] = subscriptionName,
+        ['Subscription ID'] = subscriptionId,
+        ['Resource Group'] = resourceGroup,
+        ['Total Resources'] = TotalResources,
+        ['Resources With Tags'] = ResourcesWithTags,
+        ['Resources Without Tags'] = ResourcesWithoutTags,
+        ['Tagged %'] = strcat(TaggedPercentage, '%'),
+        ['Resource Types'] = ResourceTypes,
+        ['Tags Used'] = CommonTags;
+
+// Combine subscription and resource group summaries
+subscriptionSummary
+| union rgSummary
+| order by Level asc, ['Total Resources'] desc
+
+
