@@ -9,6 +9,14 @@ resources
 
 resources
 | where type =~ 'Microsoft.Storage/storageAccounts'
+| join kind=leftouter (resourcecontainers | where type=='microsoft.resources/subscriptions' | project subscriptionId, subscriptionName=name) on subscriptionId
+| project ['Storage Account Name'] = name,
+          ['Subscription Name'] = subscriptionName,
+          ['Resource Group'] = resourceGroup
+| sort by ['Storage Account Name'] asc
+
+resources
+| where type =~ 'Microsoft.Storage/storageAccounts'
 | extend subscriptionName = subscription().displayName
 | extend allowHttpTraffic = properties.supportsHttpsTrafficOnly == false
 | extend blobPublicAccess = properties.allowBlobPublicAccess
