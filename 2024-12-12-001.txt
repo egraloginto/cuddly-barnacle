@@ -24,9 +24,9 @@ resources
 | project ['Storage Account Name'] = name,
           ['Subscription Name'] = subscriptionName,
           ['Resource Group'] = resourceGroup,
-          ['File Storage (GB)'] = iif(isnotnull(fileServices.fileShare.usage), round(todouble(fileServices.fileShare.usage)/1024/1024/1024, 2), 0),
-          ['Blob Storage (GB)'] = iif(isnotnull(blobServices.blobSize), round(todouble(blobServices.blobSize)/1024/1024/1024, 2), 0),
-          ['Table Storage (GB)'] = iif(isnotnull(tableServices.tableCount), round(todouble(tableServices.tableSize)/1024/1024/1024, 2), 0),
+          ['File Storage (GB)'] = iif(isnotnull(fileServices.fileShare.usage), round(todouble(fileServices.fileShare.usage)/1024/1024/1024, 2), todouble(0)),
+          ['Blob Storage (GB)'] = iif(isnotnull(blobServices.blobSize), round(todouble(blobServices.blobSize)/1024/1024/1024, 2), todouble(0)),
+          ['Table Storage (GB)'] = iif(isnotnull(tableServices.tableCount), round(todouble(tableServices.tableSize)/1024/1024/1024, 2), todouble(0)),
           ['Creation Date'] = properties.creationTime
 | sort by ['Storage Account Name'] asc
 
