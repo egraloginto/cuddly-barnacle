@@ -1,0 +1,27 @@
+resources
+| where type =~ 'Microsoft.Storage/storageAccounts'
+| extend subscriptionName = subscription().displayName
+| project 
+    ['Storage Account Name'] = name,
+    ['Subscription Name'] = subscriptionName,
+    ['Resource Group Name'] = resourceGroup
+| sort by ['Storage Account Name'] asc
+
+resources
+| where type =~ 'Microsoft.Storage/storageAccounts'
+| extend subscriptionName = subscription().displayName
+| extend allowHttpTraffic = properties.supportsHttpsTrafficOnly == false
+| extend blobPublicAccess = properties.allowBlobPublicAccess
+| extend keyAccess = properties.allowSharedKeyAccess
+| extend tlsVersion = properties.minimumTlsVersion
+| extend publicNetworkAccess = properties.publicNetworkAccess
+| project 
+    ['Storage Account Name'] = name,
+    ['Subscription Name'] = subscriptionName,
+    ['Resource Group Name'] = resourceGroup,
+    ['HTTP Traffic Allowed'] = allowHttpTraffic,
+    ['Blob Public Access Enabled'] = blobPublicAccess,
+    ['Storage Key Access Enabled'] = keyAccess,
+    ['Minimum TLS Version'] = tlsVersion,
+    ['Public Network Access Enabled'] = publicNetworkAccess
+| sort by ['Storage Account Name'] asc
