@@ -17,6 +17,21 @@ resources
 
 resources
 | where type =~ 'Microsoft.Storage/storageAccounts'
+| join kind=leftouter (resourcecontainers | where type=='microsoft.resources/subscriptions' | project subscriptionId, subscriptionName=name) on subscriptionId
+| extend fileServices = properties.fileServices.properties,
+         blobServices = properties.blobServices.properties,
+         tableServices = properties.tableServices.properties
+| project ['Storage Account Name'] = name,
+          ['Subscription Name'] = subscriptionName,
+          ['Resource Group'] = resourceGroup,
+          ['File Storage (GB)'] = iif(isnotnull(fileServices.fileShare.usage), round(todouble(fileServices.fileShare.usage)/1024/1024/1024, 2), 0),
+          ['Blob Storage (GB)'] = iif(isnotnull(blobServices.blobSize), round(todouble(blobServices.blobSize)/1024/1024/1024, 2), 0),
+          ['Table Storage (GB)'] = iif(isnotnull(tableServices.tableCount), round(todouble(tableServices.tableSize)/1024/1024/1024, 2), 0),
+          ['Creation Date'] = properties.creationTime
+| sort by ['Storage Account Name'] asc
+
+resources
+| where type =~ 'Microsoft.Storage/storageAccounts'
 | extend subscriptionName = subscription().displayName
 | extend allowHttpTraffic = properties.supportsHttpsTrafficOnly == false
 | extend blobPublicAccess = properties.allowBlobPublicAccess
