@@ -1,6 +1,3 @@
-# Ensure AzureAD module is installed
-# If not installed, run: Install-Module -Name AzureAD
-
 # Connect to Azure AD
 Connect-AzureAD
 
@@ -19,24 +16,48 @@ $targetRoles = @(
 # Initialize results array
 $results = @()
 
-# Get all directory roles
-$directoryRoles = Get-AzureADDirectoryRole
+# Get role templates
+$roleTemplates = Get-AzureADDirectoryRoleTemplate
 
-foreach ($role in $directoryRoles) {
-    # Check if this role is one we're interested in
-    if ($targetRoles -contains $role.DisplayName) {
-        # Get members of this role
-        $members = Get-AzureADDirectoryRoleMember -ObjectId $role.ObjectId
+# Get existing directory roles
+$existingRoles = Get-AzureADDirectoryRole
+
+# For each role template we're interested in
+foreach ($roleTemplate in $roleTemplates) {
+    if ($targetRoles -contains $roleTemplate.DisplayName) {
+        # Check if role exists already
+        $roleExists = $existingRoles | Where-Object { $_.RoleTemplateId -eq $roleTemplate.ObjectId }
         
-        foreach ($member in $members) {
-            # Create custom object with relevant information
-            $results += [PSCustomObject]@{
-                RoleName = $role.DisplayName
-                MemberType = if ($member.ObjectType -eq "User") { "User" } else { "Group" }
-                DisplayName = $member.DisplayName
-                UserPrincipalName = if ($member.UserPrincipalName) { $member.UserPrincipalName } else { "N/A" }
-                ObjectId = $member.ObjectId
-                Enabled = if ($member.AccountEnabled -ne $null) { $member.AccountEnabled } else { "N/A" }
+        if (-not $roleExists) {
+            # Enable role from template
+            try {
+                Enable-AzureADDirectoryRole -RoleTemplateId $roleTemplate.ObjectId
+                # Get updated list of roles
+                $existingRoles = Get-AzureADDirectoryRole
+            }
+            catch {
+                Write-Warning "Could not enable role: $($roleTemplate.DisplayName). Error: $_"
+                continue
+            }
+        }
+        
+        # Get the enabled role
+        $role = $existingRoles | Where-Object { $_.RoleTemplateId -eq $roleTemplate.ObjectId }
+        
+        if ($role) {
+            # Get members of this role
+            $members = Get-AzureADDirectoryRoleMember -ObjectId $role.ObjectId
+            
+            foreach ($member in $members) {
+                # Create custom object with relevant information
+                $results += [PSCustomObject]@{
+                    RoleName = $role.DisplayName
+                    MemberType = if ($member.ObjectType -eq "User") { "User" } else { "Group" }
+                    DisplayName = $member.DisplayName
+                    UserPrincipalName = if ($member.UserPrincipalName) { $member.UserPrincipalName } else { "N/A" }
+                    ObjectId = $member.ObjectId
+                    Enabled = if ($member.AccountEnabled -ne $null) { $member.AccountEnabled } else { "N/A" }
+                }
             }
         }
     }
