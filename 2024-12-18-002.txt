@@ -1,0 +1,200 @@
+# Connect to Azure AD
+Connect-AzureAD
+
+# Array of role names to check
+$targetRoles = @(
+    "Global Administrator",
+    "Privileged Role Administrator",
+    "User Administrator",
+    "SharePoint Administrator",
+    "Exchange Administrator",
+    "Hybrid Identity Administrator",
+    "Application Administrator",
+    "Cloud Application Administrator"
+)
+
+# Initialize results array
+$results = @()
+
+# Function to get PIM role assignments
+function Get-PIMRoleAssignments {
+    param (
+        [string]$RoleDefinitionId
+    )
+    
+    $apiVersion = "beta"
+    $uri = "https://graph.microsoft.com/$apiVersion/privilegedAccess/aadRoles/resources/"+
+           (Get-AzureADTenantDetail).ObjectId +
+           "/roleAssignments?`$expand=subject,roleDefinition(`$expand=resource)&`$filter=roleDefinition/id eq '$RoleDefinitionId'"
+    
+    try {
+        $response = Invoke-AzureADGraphRequest -Uri $uri -Method Get
+        return $response.value
+    }
+    catch {
+        Write-Warning "Could not get PIM assignments for role $RoleDefinitionId. Error: $_"
+        return $null
+    }
+}
+
+# Function to process group members
+function Get-GroupMembersRecursive {
+    param (
+        [string]$GroupObjectId,
+        [string]$GroupName
+    )
+    
+    $groupMembers = @()
+    $members = Get-AzureADGroupMember -ObjectId $GroupObjectId -All $true
+    
+    foreach ($member in $members) {
+        if ($member.ObjectType -eq "User") {
+            $groupMembers += [PSCustomObject]@{
+                DisplayName = "$($member.DisplayName) (${GroupName})"
+                UserPrincipalName = $member.UserPrincipalName
+                ObjectId = $member.ObjectId
+                Enabled = $member.AccountEnabled
+            }
+        }
+        elseif ($member.ObjectType -eq "Group") {
+            $nestedMembers = Get-GroupMembersRecursive -GroupObjectId $member.ObjectId -GroupName "${GroupName} > $($member.DisplayName)"
+            $groupMembers += $nestedMembers
+        }
+    }
+    
+    return $groupMembers
+}
+
+# Get role templates and existing roles
+$roleTemplates = Get-AzureADDirectoryRoleTemplate
+$existingRoles = Get-AzureADDirectoryRole
+
+# Process each role template
+foreach ($roleTemplate in $roleTemplates) {
+    if ($targetRoles -contains $roleTemplate.DisplayName) {
+        # Check if role exists already
+        $roleExists = $existingRoles | Where-Object { $_.RoleTemplateId -eq $roleTemplate.ObjectId }
+        
+        if (-not $roleExists) {
+            try {
+                Enable-AzureADDirectoryRole -RoleTemplateId $roleTemplate.ObjectId
+                $existingRoles = Get-AzureADDirectoryRole
+            }
+            catch {
+                Write-Warning "Could not enable role: $($roleTemplate.DisplayName). Error: $_"
+                continue
+            }
+        }
+        
+        $role = $existingRoles | Where-Object { $_.RoleTemplateId -eq $roleTemplate.ObjectId }
+        
+        if ($role) {
+            # Get regular role members
+            $members = Get-AzureADDirectoryRoleMember -ObjectId $role.ObjectId
+            
+            # Get PIM assignments
+            $pimAssignments = Get-PIMRoleAssignments -RoleDefinitionId $roleTemplate.ObjectId
+            
+            # Process regular assignments
+            foreach ($member in $members) {
+                if ($member.ObjectType -eq "User") {
+                    $results += [PSCustomObject]@{
+                        RoleName = $role.DisplayName
+                        MemberType = "User"
+                        DisplayName = $member.DisplayName
+                        UserPrincipalName = $member.UserPrincipalName
+                        ObjectId = $member.ObjectId
+                        Enabled = $member.AccountEnabled
+                        AssignmentType = "Permanent"
+                    }
+                }
+                elseif ($member.ObjectType -eq "Group") {
+                    $groupMembers = Get-GroupMembersRecursive -GroupObjectId $member.ObjectId -GroupName $member.DisplayName
+                    
+                    if ($groupMembers.Count -eq 0) {
+                        # Empty group
+                        $results += [PSCustomObject]@{
+                            RoleName = $role.DisplayName
+                            MemberType = "Group"
+                            DisplayName = "($($member.DisplayName))"
+                            UserPrincipalName = "N/A"
+                            ObjectId = $member.ObjectId
+                            Enabled = "N/A"
+                            AssignmentType = "Permanent"
+                        }
+                    }
+                    else {
+                        foreach ($groupMember in $groupMembers) {
+                            $results += [PSCustomObject]@{
+                                RoleName = $role.DisplayName
+                                MemberType = "User"
+                                DisplayName = $groupMember.DisplayName
+                                UserPrincipalName = $groupMember.UserPrincipalName
+                                ObjectId = $groupMember.ObjectId
+                                Enabled = $groupMember.Enabled
+                                AssignmentType = "Permanent"
+                            }
+                        }
+                    }
+                }
+            }
+            
+            # Process PIM assignments
+            if ($pimAssignments) {
+                foreach ($pimAssignment in $pimAssignments) {
+                    if ($pimAssignment.subject.type -eq "User") {
+                        $results += [PSCustomObject]@{
+                            RoleName = $role.DisplayName
+                            MemberType = "User"
+                            DisplayName = $pimAssignment.subject.displayName
+                            UserPrincipalName = $pimAssignment.subject.userPrincipalName
+                            ObjectId = $pimAssignment.subject.id
+                            Enabled = "N/A"
+                            AssignmentType = "PIM"
+                        }
+                    }
+                    elseif ($pimAssignment.subject.type -eq "Group") {
+                        $groupMembers = Get-GroupMembersRecursive -GroupObjectId $pimAssignment.subject.id -GroupName $pimAssignment.subject.displayName
+                        
+                        if ($groupMembers.Count -eq 0) {
+                            $results += [PSCustomObject]@{
+                                RoleName = $role.DisplayName
+                                MemberType = "Group"
+                                DisplayName = "($($pimAssignment.subject.displayName))"
+                                UserPrincipalName = "N/A"
+                                ObjectId = $pimAssignment.subject.id
+                                Enabled = "N/A"
+                                AssignmentType = "PIM"
+                            }
+                        }
+                        else {
+                            foreach ($groupMember in $groupMembers) {
+                                $results += [PSCustomObject]@{
+                                    RoleName = $role.DisplayName
+                                    MemberType = "User"
+                                    DisplayName = $groupMember.DisplayName
+                                    UserPrincipalName = $groupMember.UserPrincipalName
+                                    ObjectId = $groupMember.ObjectId
+                                    Enabled = $groupMember.Enabled
+                                    AssignmentType = "PIM"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+# Remove duplicates (in case a user has both PIM and permanent assignments)
+$results = $results | Sort-Object ObjectId, RoleName -Unique
+
+# Export results to CSV
+$results | Export-Csv -Path "AzureADAdminRoles_$(Get-Date -Format 'yyyyMMdd').csv" -NoTypeInformation
+
+# Display results in console
+$results | Format-Table -AutoSize -Wrap
+
+# Disconnect from Azure AD
+Disconnect-AzureAD
