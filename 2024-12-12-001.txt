@@ -18,15 +18,15 @@ resources
 resources
 | where type =~ 'Microsoft.Storage/storageAccounts'
 | join kind=leftouter (resourcecontainers | where type=='microsoft.resources/subscriptions' | project subscriptionId, subscriptionName=name) on subscriptionId
-| extend fileServices = properties.fileServices.properties,
-         blobServices = properties.blobServices.properties,
-         tableServices = properties.tableServices.properties
+| extend fileShareStats = properties.primaryEndpoints.file,
+         blobStats = properties.primaryEndpoints.blob,
+         tableStats = properties.primaryEndpoints.table
 | project ['Storage Account Name'] = name,
           ['Subscription Name'] = subscriptionName,
           ['Resource Group'] = resourceGroup,
-          ['File Storage (GB)'] = iif(isnotnull(fileServices.fileShare.usage), round(todouble(fileServices.fileShare.usage)/1024/1024/1024, 2), todouble(0)),
-          ['Blob Storage (GB)'] = iif(isnotnull(blobServices.blobSize), round(todouble(blobServices.blobSize)/1024/1024/1024, 2), todouble(0)),
-          ['Table Storage (GB)'] = iif(isnotnull(tableServices.tableCount), round(todouble(tableServices.tableSize)/1024/1024/1024, 2), todouble(0)),
+          ['Has File Shares'] = iif(isnotnull(fileShareStats), 'Yes', 'No'),
+          ['Has Blob Storage'] = iif(isnotnull(blobStats), 'Yes', 'No'),
+          ['Has Table Storage'] = iif(isnotnull(tableStats), 'Yes', 'No'),
           ['Creation Date'] = properties.creationTime
 | sort by ['Storage Account Name'] asc
 
@@ -48,3 +48,81 @@ resources
     ['Minimum TLS Version'] = tlsVersion,
     ['Public Network Access Enabled'] = publicNetworkAccess
 | sort by ['Storage Account Name'] asc
+
+
+
+# Ensure you're logged into Azure
+Connect-AzAccount
+
+# Get all subscriptions
+$subscriptions = Get-AzSubscription
+
+# Create array to store results
+$results = @()
+
+foreach ($sub in $subscriptions) {
+    # Set context to subscription
+    Set-AzContext -Subscription $sub.Id
+
+    # Get all storage accounts in subscription
+    $storageAccounts = Get-AzStorageAccount
+
+    foreach ($sa in $storageAccounts) {
+        # Get metrics for each storage type
+        $metrics = @{
+            FileShare = 0
+            Blob = 0
+            Table = 0
+        }
+
+        # Get File Share usage if enabled
+        if ($sa.EnableFileShareStatistics) {
+            $fileShares = Get-AzStorageShare -Context $sa.Context
+            foreach ($share in $fileShares) {
+                $metrics.FileShare += $share.QuotaGiB
+            }
+        }
+
+        # Get Blob usage
+        try {
+            $blobStats = Get-AzMetric -ResourceId $sa.Id `
+                -MetricName "UsedCapacity" `
+                -AggregationType Total `
+                -WarningAction SilentlyContinue
+            $metrics.Blob = [math]::Round(($blobStats.Data.Total[-1] / 1GB), 2)
+        } catch {
+            Write-Warning "Could not get blob metrics for $($sa.StorageAccountName)"
+        }
+
+        # Get Table usage
+        try {
+            $tableStats = Get-AzMetric -ResourceId $sa.Id/tableServices/default `
+                -MetricName "TableCapacity" `
+                -AggregationType Average `
+                -WarningAction SilentlyContinue
+            $metrics.Table = [math]::Round(($tableStats.Data.Average[-1] / 1GB), 2)
+        } catch {
+            Write-Warning "Could not get table metrics for $($sa.StorageAccountName)"
+        }
+
+        # Create result object
+        $resultObj = [PSCustomObject]@{
+            'Storage Account Name' = $sa.StorageAccountName
+            'Subscription Name'   = $sub.Name
+            'Resource Group'      = $sa.ResourceGroupName
+            'File Storage (GB)'   = $metrics.FileShare
+            'Blob Storage (GB)'   = $metrics.Blob
+            'Table Storage (GB)'  = $metrics.Table
+            'Creation Date'       = $sa.CreationTime
+        }
+
+        # Add to results array
+        $results += $resultObj
+    }
+}
+
+# Export results to CSV
+$results | Export-Csv -Path "StorageAccountMetrics.csv" -NoTypeInformation
+
+# Display results in console
+$results | Format-Table -AutoSize

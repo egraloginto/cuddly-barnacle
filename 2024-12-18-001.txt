@@ -1,0 +1,56 @@
+# Connect to Microsoft Graph (requires Microsoft.Graph.Authentication module)
+Connect-MgGraph -Scopes "Directory.Read.All", "RoleManagement.Read.Directory"
+
+# Array of role names to check
+$targetRoles = @(
+    "Global Administrator",
+    "Privileged Role Administrator",
+    "User Administrator",
+    "SharePoint Administrator",
+    "Exchange Administrator",
+    "Hybrid Identity Administrator",
+    "Application Administrator",
+    "Cloud Application Administrator"
+)
+
+# Initialize results array
+$results = @()
+
+# Get all directory roles
+$directoryRoles = Get-MgDirectoryRole -All
+
+foreach ($role in $directoryRoles) {
+    # Check if this role is one we're interested in
+    if ($targetRoles -contains $role.DisplayName) {
+        # Get members of this role
+        $members = Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id
+        
+        foreach ($member in $members) {
+            # Get additional details about the member
+            $memberDetails = if ($member.AdditionalProperties.'@odata.type' -eq "#microsoft.graph.user") {
+                Get-MgUser -UserId $member.Id
+            } else {
+                Get-MgGroup -GroupId $member.Id
+            }
+            
+            # Create custom object with relevant information
+            $results += [PSCustomObject]@{
+                RoleName = $role.DisplayName
+                MemberType = if ($member.AdditionalProperties.'@odata.type' -eq "#microsoft.graph.user") { "User" } else { "Group" }
+                DisplayName = $memberDetails.DisplayName
+                UserPrincipalName = if ($memberDetails.UserPrincipalName) { $memberDetails.UserPrincipalName } else { "N/A" }
+                ObjectId = $member.Id
+                Enabled = if ($memberDetails.AccountEnabled -ne $null) { $memberDetails.AccountEnabled } else { "N/A" }
+            }
+        }
+    }
+}
+
+# Export results to CSV
+$results | Export-Csv -Path "AzureADAdminRoles_$(Get-Date -Format 'yyyyMMdd').csv" -NoTypeInformation
+
+# Display results in console
+$results | Format-Table -AutoSize -Wrap
+
+# Disconnect from Microsoft Graph
+Disconnect-MgGraph
