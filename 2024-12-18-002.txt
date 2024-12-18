@@ -1,3 +1,7 @@
+# Ensure AzureADPreview module is installed
+# Install-Module -Name AzureADPreview -Force
+# Import-Module AzureADPreview
+
 # Connect to Azure AD
 Connect-AzureAD
 
@@ -15,24 +19,6 @@ $targetRoles = @(
 
 # Initialize results array
 $results = @()
-
-# Function to get PIM role assignments
-function Get-PIMRoleAssignments {
-    param (
-        [string]$RoleDefinitionId
-    )
-    
-    try {
-        $resourceId = (Get-AzureADTenantDetail).ObjectId
-        $assignments = Get-AzureADMSPrivilegedRoleAssignment -ProviderId "aadRoles" -ResourceId $resourceId |
-            Where-Object { $_.RoleDefinitionId -eq $RoleDefinitionId }
-        return $assignments
-    }
-    catch {
-        Write-Warning "Could not get PIM assignments for role $RoleDefinitionId. Error: $_"
-        return $null
-    }
-}
 
 # Function to process group members
 function Get-GroupMembersRecursive {
@@ -62,6 +48,11 @@ function Get-GroupMembersRecursive {
     return $groupMembers
 }
 
+# Get tenant ID for PIM
+$tenantID = (Get-AzureADTenantDetail).ObjectId
+
+Write-Host "Getting role assignments..." -ForegroundColor Yellow
+
 # Get role templates and existing roles
 $roleTemplates = Get-AzureADDirectoryRoleTemplate
 $existingRoles = Get-AzureADDirectoryRole
@@ -69,6 +60,8 @@ $existingRoles = Get-AzureADDirectoryRole
 # Process each role template
 foreach ($roleTemplate in $roleTemplates) {
     if ($targetRoles -contains $roleTemplate.DisplayName) {
+        Write-Host "Processing role: $($roleTemplate.DisplayName)" -ForegroundColor Cyan
+        
         # Check if role exists already
         $roleExists = $existingRoles | Where-Object { $_.RoleTemplateId -eq $roleTemplate.ObjectId }
         
@@ -86,13 +79,9 @@ foreach ($roleTemplate in $roleTemplates) {
         $role = $existingRoles | Where-Object { $_.RoleTemplateId -eq $roleTemplate.ObjectId }
         
         if ($role) {
-            # Get regular role members
+            # Get permanent role members
             $members = Get-AzureADDirectoryRoleMember -ObjectId $role.ObjectId
             
-            # Get PIM assignments
-            $pimAssignments = Get-PIMRoleAssignments -RoleDefinitionId $role.RoleTemplateId
-            
-            # Process regular assignments
             foreach ($member in $members) {
                 if ($member.ObjectType -eq "User") {
                     $results += [PSCustomObject]@{
@@ -136,8 +125,12 @@ foreach ($roleTemplate in $roleTemplates) {
                 }
             }
             
-            # Process PIM assignments
-            if ($pimAssignments) {
+            # Get PIM role assignments
+            Write-Host "Getting PIM assignments for role: $($roleTemplate.DisplayName)" -ForegroundColor Cyan
+            try {
+                $pimAssignments = Get-AzureADMSPrivilegedRoleAssignment -ProviderId "aadRoles" -ResourceId $tenantID |
+                    Where-Object { $_.RoleDefinitionId -eq $role.RoleTemplateId }
+                
                 foreach ($pimAssignment in $pimAssignments) {
                     $subject = Get-AzureADObjectByObjectId -ObjectId $pimAssignment.SubjectId
                     
@@ -182,6 +175,9 @@ foreach ($roleTemplate in $roleTemplates) {
                     }
                 }
             }
+            catch {
+                Write-Warning "Could not get PIM assignments for role $($role.DisplayName). Error: $_"
+            }
         }
     }
 }
@@ -190,7 +186,9 @@ foreach ($roleTemplate in $roleTemplates) {
 $results = $results | Sort-Object ObjectId, RoleName -Unique
 
 # Export results to CSV
-$results | Export-Csv -Path "AzureADAdminRoles_$(Get-Date -Format 'yyyyMMdd').csv" -NoTypeInformation
+$csvPath = "AzureADAdminRoles_$(Get-Date -Format 'yyyyMMdd').csv"
+$results | Export-Csv -Path $csvPath -NoTypeInformation
+Write-Host "`nResults exported to: $csvPath" -ForegroundColor Green
 
 # Display results in console
 $results | Format-Table -AutoSize -Wrap
