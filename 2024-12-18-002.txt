@@ -22,14 +22,11 @@ function Get-PIMRoleAssignments {
         [string]$RoleDefinitionId
     )
     
-    $apiVersion = "beta"
-    $uri = "https://graph.microsoft.com/$apiVersion/privilegedAccess/aadRoles/resources/"+
-           (Get-AzureADTenantDetail).ObjectId +
-           "/roleAssignments?`$expand=subject,roleDefinition(`$expand=resource)&`$filter=roleDefinition/id eq '$RoleDefinitionId'"
-    
     try {
-        $response = Invoke-AzureADGraphRequest -Uri $uri -Method Get
-        return $response.value
+        $resourceId = (Get-AzureADTenantDetail).ObjectId
+        $assignments = Get-AzureADMSPrivilegedRoleAssignment -ProviderId "aadRoles" -ResourceId $resourceId |
+            Where-Object { $_.RoleDefinitionId -eq $RoleDefinitionId }
+        return $assignments
     }
     catch {
         Write-Warning "Could not get PIM assignments for role $RoleDefinitionId. Error: $_"
@@ -93,7 +90,7 @@ foreach ($roleTemplate in $roleTemplates) {
             $members = Get-AzureADDirectoryRoleMember -ObjectId $role.ObjectId
             
             # Get PIM assignments
-            $pimAssignments = Get-PIMRoleAssignments -RoleDefinitionId $roleTemplate.ObjectId
+            $pimAssignments = Get-PIMRoleAssignments -RoleDefinitionId $role.RoleTemplateId
             
             # Process regular assignments
             foreach ($member in $members) {
@@ -142,27 +139,29 @@ foreach ($roleTemplate in $roleTemplates) {
             # Process PIM assignments
             if ($pimAssignments) {
                 foreach ($pimAssignment in $pimAssignments) {
-                    if ($pimAssignment.subject.type -eq "User") {
+                    $subject = Get-AzureADObjectByObjectId -ObjectId $pimAssignment.SubjectId
+                    
+                    if ($subject.ObjectType -eq "User") {
                         $results += [PSCustomObject]@{
                             RoleName = $role.DisplayName
                             MemberType = "User"
-                            DisplayName = $pimAssignment.subject.displayName
-                            UserPrincipalName = $pimAssignment.subject.userPrincipalName
-                            ObjectId = $pimAssignment.subject.id
-                            Enabled = "N/A"
+                            DisplayName = $subject.DisplayName
+                            UserPrincipalName = $subject.UserPrincipalName
+                            ObjectId = $subject.ObjectId
+                            Enabled = $subject.AccountEnabled
                             AssignmentType = "PIM"
                         }
                     }
-                    elseif ($pimAssignment.subject.type -eq "Group") {
-                        $groupMembers = Get-GroupMembersRecursive -GroupObjectId $pimAssignment.subject.id -GroupName $pimAssignment.subject.displayName
+                    elseif ($subject.ObjectType -eq "Group") {
+                        $groupMembers = Get-GroupMembersRecursive -GroupObjectId $subject.ObjectId -GroupName $subject.DisplayName
                         
                         if ($groupMembers.Count -eq 0) {
                             $results += [PSCustomObject]@{
                                 RoleName = $role.DisplayName
                                 MemberType = "Group"
-                                DisplayName = "($($pimAssignment.subject.displayName))"
+                                DisplayName = "($($subject.DisplayName))"
                                 UserPrincipalName = "N/A"
-                                ObjectId = $pimAssignment.subject.id
+                                ObjectId = $subject.ObjectId
                                 Enabled = "N/A"
                                 AssignmentType = "PIM"
                             }
