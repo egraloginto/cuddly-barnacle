@@ -1,0 +1,52 @@
+function Get-AccessTokenDeviceFlow {
+    # Device code request
+    $deviceCodeUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode"
+    $scope = "User.ReadWrite.All"
+    
+    $deviceCodeBody = @{
+        'client_id' = 'common'
+        'scope' = $scope
+    }
+    
+    # Get device code
+    $deviceCodeResponse = Invoke-RestMethod -Uri $deviceCodeUrl -Method Post -Body $deviceCodeBody
+    
+    # Display message to user and open browser
+    Write-Host $deviceCodeResponse.message
+    Start-Process $deviceCodeResponse.verification_uri
+    
+    # Poll for token
+    $tokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    
+    do {
+        Start-Sleep -Seconds $deviceCodeResponse.interval
+        
+        $tokenBody = @{
+            'grant_type' = 'device_code'
+            'device_code' = $deviceCodeResponse.device_code
+            'client_id' = 'common'
+        }
+        
+        try {
+            $tokenResponse = Invoke-RestMethod -Uri $tokenUrl -Method Post -Body $tokenBody
+            return $tokenResponse.access_token
+        }
+        catch {
+            if ($_.Exception.Response.StatusCode -ne 400) {
+                throw
+            }
+        }
+    } while ($true)
+}
+
+# Get the token
+$accessToken = Get-AccessTokenDeviceFlow
+
+# Use the token to revoke sessions
+$headers = @{
+    'Authorization' = "Bearer $accessToken"
+    'Content-Type' = 'application/json'
+}
+
+$url = 'https://graph.microsoft.com/v1.0/me/revokeSignInSessions'
+$response = Invoke-RestMethod -Uri $url -Headers $headers -Method Post
