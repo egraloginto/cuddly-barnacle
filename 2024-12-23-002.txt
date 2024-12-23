@@ -1,10 +1,13 @@
 function Get-AccessTokenDeviceFlow {
     # Device code request
     $deviceCodeUrl = "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode"
-    $scope = "User.ReadWrite.All"
+    $scope = "https://graph.microsoft.com/User.ReadWrite.All"
+    
+    # Using Microsoft Graph PowerShell SDK's client ID
+    $clientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
     
     $deviceCodeBody = @{
-        'client_id' = 'organizations'
+        'client_id' = $clientId
         'scope' = $scope
     }
     
@@ -24,7 +27,7 @@ function Get-AccessTokenDeviceFlow {
         $tokenBody = @{
             'grant_type' = 'device_code'
             'device_code' = $deviceCodeResponse.device_code
-            'client_id' = 'organizations'
+            'client_id' = $clientId
         }
         
         try {
