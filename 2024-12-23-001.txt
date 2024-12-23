@@ -1,0 +1,12 @@
+SigninLogs
+| where ConditionalAccessPolicies contains "test"
+| where ConditionalAccessStatus == "reportOnlySuccess" or ConditionalAccessStatus == "reportOnlyFailure"
+| project TimeGenerated, 
+          UserPrincipalName, 
+          Location, 
+          IPAddress, 
+          ResultType, 
+          ResultDescription,
+          ConditionalAccessPolicies,
+          ConditionalAccessStatus
+| order by TimeGenerated desc
