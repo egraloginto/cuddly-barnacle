@@ -1,10 +1,10 @@
 function Get-AccessTokenDeviceFlow {
     # Device code request
-    $deviceCodeUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode"
+    $deviceCodeUrl = "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode"
     $scope = "User.ReadWrite.All"
     
     $deviceCodeBody = @{
-        'client_id' = 'common'
+        'client_id' = 'organizations'
         'scope' = $scope
     }
     
@@ -16,7 +16,7 @@ function Get-AccessTokenDeviceFlow {
     Start-Process $deviceCodeResponse.verification_uri
     
     # Poll for token
-    $tokenUrl = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    $tokenUrl = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
     
     do {
         Start-Sleep -Seconds $deviceCodeResponse.interval
@@ -24,7 +24,7 @@ function Get-AccessTokenDeviceFlow {
         $tokenBody = @{
             'grant_type' = 'device_code'
             'device_code' = $deviceCodeResponse.device_code
-            'client_id' = 'common'
+            'client_id' = 'organizations'
         }
         
         try {
